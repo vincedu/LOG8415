@@ -6,13 +6,15 @@ import configparser
 import socket
 import mysql.connector
 from mysql.connector import errorcode
-import random
+from random import randint
+import pickle
 import ping3
 
 config = configparser.ConfigParser()
 config.read('config.ini')
 
 numberOfSlaves = int(config['ClusterSetting']['NumberOfSlaves'])
+
 
 # initialize TCP socket connection on Proxy server to listen to incoming requests
 # reference: https://www.geeksforgeeks.org/socket-programming-python/
@@ -22,16 +24,17 @@ def initialize_socket():
 
     port = int(config['ProxyServer']['Port'])
     s.bind(('', port))
-    print ("socket binded to %s" %(port))
+    print("socket binded to %s" % (port))
 
     s.listen(1)
     print("socket is listening")
 
     return s
 
+
 def execute_sql_command(server_name, cmd):
     try:
-        cnx = mysql.connector.connect(user='root', password='1234',
+        cnx = mysql.connector.connect(user='proxy', password='1234',
                                       host=config[server_name]['Host'],
                                       database='tp3')
     except mysql.connector.Error as err:
@@ -44,19 +47,31 @@ def execute_sql_command(server_name, cmd):
 
     cursor = cnx.cursor()
     cursor.execute(cmd)
-    cnx.commit()
+    cmd_type = cmd.split()[0].lower()
+    if cmd_type == "insert" or cmd_type == "delete":
+        cnx.commit()
+    elif cmd_type == "select":
+        print("query result: ")
+        print(cursor.fetchall())
+
 
 def direct_hit(cmd):
     execute_sql_command('Master', cmd)
+    print("direct hit, request handled by Master\n")
+
 
 def random(cmd):
-    rand_num = random.randint(1, numberOfSlaves)
+    rand_num = randint(1, numberOfSlaves)
     rand_slave = 'Slave' + str(rand_num)
     execute_sql_command(rand_slave, cmd)
+    print("random, request handled by " + rand_slave + "\n")
+
 
 def customized(cmd):
     server_name = find_server_with_min_ping()
     execute_sql_command(server_name, cmd)
+    print("customized, request handled by " + server_name + "\n")
+
 
 def find_server_with_min_ping():
     ping_times = []
@@ -76,6 +91,7 @@ def find_server_with_min_ping():
         return 'Master'
     return 'Slave' + str(min_index)
 
+
 def ping(host):
     try:
         ping_time = ping3.ping(host)
@@ -86,8 +102,8 @@ def ping(host):
 
     return ping_time
 
-def main():
 
+def main():
     s = initialize_socket()
 
     # Establish connection with client.
@@ -95,25 +111,34 @@ def main():
     print('Got connection from', addr)
 
     while True:
-        cmd = c.recv(2048).decode()
-        if not cmd:
+        req = pickle.loads(c.recv(2048))
+        if not req:
             break
 
-        cmd_type = cmd.split()[0].lower()
+        cmd = req['command']
+        cmd_type = req['type']
+        print(cmd)
+
         if cmd_type == "insert":
             direct_hit(cmd)
         elif cmd_type == "select":
-            # mode for direct hit, 1 for random, 2 for customized
-            mode = config['ProxyServer']['Mode']
+            # mode 0 for direct hit, 1 for random, 2 for customized
+            mode = req['mode']
             if mode == 0:
                 direct_hit(cmd)
             elif mode == 1:
                 random(cmd)
             elif mode == 2:
                 customized(cmd)
+        elif cmd_type == 'delete':
+            direct_hit(cmd)
+        response = 'request completed'
+        c.send(response.encode())
 
     # Close the connection with the client
     c.close()
+    s.close()
+
 
 if __name__ == '__main__':
     main()
