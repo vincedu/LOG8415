@@ -4,6 +4,7 @@
 
 import configparser
 import socket
+import pickle
 import time
 
 config = configparser.ConfigParser()
@@ -12,33 +13,67 @@ config.read('config.ini')
 insert_cmd = 'INSERT INTO inventory VALUES '
 select_cmd = 'SELECT * FROM inventory WHERE inventory_id = '
 
+
 # establish socket connection with Proxy server to send TCP requests
 # reference: https://www.geeksforgeeks.org/socket-programming-python/
-def initialize_socket():
+def initialize_socket(host, port):
     s = socket.socket()
     print("Socket successfully created")
 
-    host = config['ProxyServer']['Host']
-    port = int(config['ProxyServer']['Port'])
     s.connect((host, port))
-    print ("socket connected to %s" %(host))
+    print("socket connected to %s" % (host))
 
     return s
 
+
 def send_write_requests(socket):
-    f = open('sakila-data-inventory.txt', 'r')
+    f = open('sakila-data-inventory-100.txt', 'r')
     for line in f:
+        line = line.strip('\n')
         cmd = insert_cmd + line
-        socket.send(cmd.encode())
+        req = {'type': 'insert', 'command': cmd}
+        socket.send(pickle.dumps(req))
+        socket.recv(2048)
     f.close()
 
-# def send_read_requests():
 
+def send_read_requests(socket, mode):
+    nb_rows = 100
+    for i in range(1, nb_rows + 1):
+        cmd = select_cmd + str(i)
+        req = {'type': 'select', 'command': cmd, 'mode': mode}
+        socket.send(pickle.dumps(req))
+        socket.recv(2048)
+
+def clean_database(socket):
+    cmd = 'DELETE FROM inventory;'
+    req = {'type': 'delete', 'command': cmd}
+    socket.send(pickle.dumps(req))
+    socket.recv(2048)
 
 def main():
-    socket = initialize_socket()
-    send_write_requests(socket)
-    time.sleep(0.5)
+    host = config['ProxyServer']['Host']
+    port = int(config['ProxyServer']['Port'])
+    socket = initialize_socket(host, port)
+
+    # performance measurement for proxy server
+
+    # mode 0 for direct hit, 1 for random, 2 for customized
+    for mode in range(3):
+        print("Requests to proxy server with mode " + str(mode) + " started")
+        start = time.time()
+        send_write_requests(socket)
+        send_read_requests(socket, mode)
+        request_time = time.time() - start
+        print("Requests to proxy server with mode " + str(mode) + " completed in {0:.0f}ms".format(request_time))
+
+        time.sleep(1)
+        clean_database(socket)
+
+    # TODO:performance measurement for gatekeeper server
+
+    socket.close()
+    print("socket is closed on client")
 
 
 if __name__ == '__main__':
