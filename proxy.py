@@ -111,10 +111,11 @@ def main():
     print('Got connection from', addr)
 
     while True:
-        req = pickle.loads(c.recv(2048))
-        if not req:
+        data = c.recv(2048)
+        if not data:
             break
 
+        req = pickle.loads(data)
         cmd = req['command']
         cmd_type = req['type']
         print(cmd)
@@ -138,6 +139,7 @@ def main():
     # Close the connection with the client
     c.close()
     s.close()
+    print("socket is closed on proxy server")
 
 
 if __name__ == '__main__':
