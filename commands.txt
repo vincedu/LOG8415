@@ -15,6 +15,13 @@ SHOW FULL TABLES;
 
 ****my.cnf****
 
+[mysqld]
+ndbcluster
+datadir=/opt/mysqlcluster/deploy/mysqld_data
+basedir=/opt/mysqlcluster/home/mysqlc
+port=3306
+
+
 sudo chmod 755 my.cnf
 
 ****config.ini****
@@ -41,7 +48,24 @@ hostname=ip-172-31-85-70.ec2.internal
 nodeid=5
 
 [mysqld]
+hostname=ip-172-31-87-247.ec2.internal
 nodeid=50
+
+[mysqld]
+hostname=ip-172-31-84-197.ec2.internal
+nodeid=51
+
+[mysqld]
+hostname=ip-172-31-84-18.ec2.internal
+nodeid=52
+
+[mysqld]
+hostname=ip-172-31-85-70.ec2.internal
+nodeid=53
+
+****initialize DB****
+
+sudo scripts/mysql_install_db --no-defaults --datadir=/opt/mysqlcluster/deploy/mysqld_data
 
 
 ****start management node****
@@ -60,6 +84,9 @@ sudo env "PATH=$PATH" mysqld --defaults-file=/opt/mysqlcluster/deploy/conf/my.cn
 
 mysql -h 127.0.0.1 -u root -p
 
+create user 'proxy'@'%' identified by '1234';
+grant all privileges on * . * to 'proxy'@'%' identified by '1234';
+
 ****shutdown****
 
 mysqladmin -u root -h 127.0.0.1 -p shutdown
@@ -67,24 +94,66 @@ ndb_mgm -e shutdown
 
 *********************************************************Slave_Node****************************************************
 
+
+****start data node****
 sudo env "PATH=$PATH" ndbd -c ip-172-31-87-247.ec2.internal:1186
 
+****my.cnf****
+
+[mysqld]
+ndbcluster
+datadir=/opt/mysqlcluster/deploy/mysqld_data
+basedir=/opt/mysqlcluster/home/mysqlc
+ndb-connectstring=172.31.87.247
+[mysql_cluster]
+ndb-connectstring=172.31.87.247
+
+
+****start sql node****
+
+sudo env "PATH=$PATH" mysqld --defaults-file=/opt/mysqlcluster/deploy/conf/my.cnf --user=root &
 
 **********************************************************Sysbench*****************************************************
 
 ****standalone****
 
-sysbench oltp_read_write --table-size=1000000 --db-driver=mysql --mysql-db=sakila --mysql-user=root --mysql-password=1234 prepare
+sysbench oltp_read_write --table-size=100000 --db-driver=mysql --mysql-db=sakila --mysql-user=root --mysql-password=1234 prepare
 
-sysbench oltp_read_write --table-size=1000000 --threads=6 --time=60 --events=0 --db-driver=mysql --mysql-db=sakila --mysql-user=root --mysql-password=1234 run
+sysbench oltp_read_write --table-size=100000 --threads=6 --time=60 --events=0 --db-driver=mysql --mysql-db=sakila --mysql-user=root --mysql-password=1234 run
 
 sysbench oltp_read_write --mysql-db=sakila --mysql-user=root --mysql-password=1234 cleanup
 
 
 ****cluster****
 
-sysbench  oltp_read_write --table-size=1000000 --db-driver=mysql --mysql-db=sakila --mysql-host=127.0.0.1 --mysql-user=root --mysql-password=1234 prepare
+sudo sysbench  oltp_read_write --table-size=100000 --db-driver=mysql --mysql-db=sakila --mysql-host=127.0.0.1 --mysql-user=root --mysql-password=1234 --mysql_storage_engine=ndbcluster prepare
 
-sysbench  oltp_read_write --table-size=1000000 --threads=6 --time=60 --events=0 --db-driver=mysql --mysql-db=sakila --mysql-host=127.0.0.1 --mysql-user=root --mysql-password=1234 run
+sysbench  oltp_read_write --table-size=100000 --threads=6 --time=60 --events=0 --db-driver=mysql --mysql-db=sakila --mysql-host=127.0.0.1 --mysql-user=root --mysql-password=1234 --mysql_storage_engine=ndbcluster run
+
+**********************************************************PowerAPI*****************************************************
+
+****installation****
+
+sudo apt install -y default-jre
+sudo wget https://github.com/powerapi-ng/powerapi-scala/releases/download/4.2.1/powerapi-cli-4.2.1.tgz
+sudo tar xzf powerapi-cli-4.2.1.tgz
+cd powerapi-cli-4.2.1
+
+****configuration****
+(https://github.com/powerapi-ng/powerapi-scala/wiki/procfs-cpu-simple)
+
+sudo nano conf/powerapi.conf
+	powerapi.cpu.tdp = 35
+	powerapi.cpu.tdp-factor = 0.7
 
 
+****launch****
+
+pid=$(pidof mysqld)
+
+sudo ./bin/powerapi \
+    modules procfs-cpu-simple \
+    monitor \
+      --frequency 500 \
+      --pids $pid \
+      --file ./powerapi_results.txt
